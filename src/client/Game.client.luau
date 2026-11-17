@@ -1,52 +1,103 @@
 -- Game.client: client entrypoint for Brainrot Night Market.
--- Builds the HUD (money top-right, title top-centre, hint bottom-centre)
--- and keeps it clear of the top-left corner, where Roblox's menu sits.
+-- Builds the HUD and the conveyor shop, then wires them to the server:
+-- StateSync refreshes money, income, base slots, lock, rebirth and the
+-- carrying line; ConveyorSync refreshes the shop cards; EventPing shows
+-- the event banner. Slot clicks place a carried brainrot or, with a second
+-- click to confirm, sell what is in the slot. The client never decides
+-- money: it only asks the server and renders what comes back.
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local PlayerScripts = Players.LocalPlayer:WaitForChild("PlayerScripts")
+local Hud = require(PlayerScripts.Client.Hud)
+local Shop = require(PlayerScripts.Client.Shop)
+local Effects = require(PlayerScripts.Client.Effects)
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "NightMarketGui"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = playerGui
+Hud.Build(playerGui)
+Shop.Build(playerGui)
 
-local title = Instance.new("TextLabel")
-title.Name = "Title"
-title.AnchorPoint = Vector2.new(0.5, 0)
-title.Position = UDim2.new(0.5, 0, 0, 12)
-title.Size = UDim2.fromOffset(520, 44)
-title.BackgroundTransparency = 1
-title.Text = "PASAR MALAM BRAINROT"
-title.TextColor3 = Color3.fromRGB(163, 230, 53)
-title.TextSize = 32
-title.Font = Enum.Font.GothamBlack
-title.Parent = gui
+local lastCash = 0
+local lastSnapshot = nil
+-- Sell confirmation: first click arms the slot, second click within 3 s sells.
+local armedSellSlot = 0
+local armedSellAt = 0
 
-local money = Instance.new("TextLabel")
-money.Name = "Money"
-money.AnchorPoint = Vector2.new(1, 0)
-money.Position = UDim2.new(1, -16, 0, 12)
-money.Size = UDim2.fromOffset(220, 44)
-money.BackgroundColor3 = Color3.fromRGB(15, 23, 42)
-money.BackgroundTransparency = 0.25
-money.Text = "$100"
-money.TextColor3 = Color3.fromRGB(255, 215, 0)
-money.TextSize = 30
-money.Font = Enum.Font.GothamBold
-money.Parent = gui
+remotes.StateSync.OnClientEvent:Connect(function(snapshot)
+	lastSnapshot = snapshot
+	if snapshot.Cash < lastCash then
+		Effects.PlayPurchase(Hud)
+	end
+	lastCash = snapshot.Cash
+	Hud.SetMoney(snapshot)
+	Hud.RefreshBase(snapshot)
+	Hud.SetLock(snapshot)
+	Hud.SetRebirth(snapshot)
+	Hud.SetCarrying(snapshot)
+	Shop.RefreshConveyor(Shop.LastSlots or {}, snapshot.Cash)
+end)
 
-local hint = Instance.new("TextLabel")
-hint.Name = "Hint"
-hint.AnchorPoint = Vector2.new(0.5, 1)
-hint.Position = UDim2.new(0.5, 0, 1, -16)
-hint.Size = UDim2.fromOffset(640, 36)
-hint.BackgroundTransparency = 1
-hint.Text = "Walk to the conveyor up north and buy your first brainrot!"
-hint.TextColor3 = Color3.fromRGB(230, 230, 230)
-hint.TextSize = 20
-hint.Font = Enum.Font.Gotham
-hint.Parent = gui
+remotes.ConveyorSync.OnClientEvent:Connect(function(slots)
+	Shop.LastSlots = slots
+	Shop.RefreshConveyor(slots, lastCash)
+end)
+
+remotes.EventPing.OnClientEvent:Connect(function(event)
+	Hud.ShowBanner(event.Name, event.Active)
+	Effects.PlayEvent(Hud)
+end)
+
+Shop.OnBuy = function(slot)
+	remotes.BuyBrainrot:FireServer(slot)
+end
+
+for slot = 1, 8 do
+	local button = Hud.SlotButtons[slot]
+	if button ~= nil then
+		button.MouseButton1Click:Connect(function()
+			if lastSnapshot == nil then
+				return
+			end
+			if lastSnapshot.Carrying ~= nil and lastSnapshot.Carrying ~= "" then
+				remotes.PlaceBrainrot:FireServer(slot)
+				return
+			end
+			-- Empty slot with empty hands: nothing to do.
+			local occupied = false
+			for _, placed in ipairs(lastSnapshot.Placed) do
+				if placed.Slot == slot then
+					occupied = true
+					break
+				end
+			end
+			if not occupied then
+				return
+			end
+			-- Occupied slot: first click arms the sale, second confirms it.
+			if armedSellSlot == slot and os.time() - armedSellAt <= 3 then
+				remotes.SellBrainrot:FireServer(slot)
+				armedSellSlot = 0
+			else
+				armedSellSlot = slot
+				armedSellAt = os.time()
+				button.Text = "Sell? Click again!"
+			end
+		end)
+	end
+end
+
+if Hud.LockButton ~= nil then
+	Hud.LockButton.MouseButton1Click:Connect(function()
+		remotes.LockBase:FireServer()
+	end)
+end
+
+if Hud.RebirthButton ~= nil then
+	Hud.RebirthButton.MouseButton1Click:Connect(function()
+		remotes.Rebirth:FireServer()
+	end)
+end
 
 print("[Brainrot Night Market] client HUD ready")

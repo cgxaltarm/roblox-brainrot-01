@@ -28,6 +28,13 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 const notDotted = (path: string): boolean => !basename(path).startsWith('.');
 
 mkdirSync(out, { recursive: true });
+// Fail fast with a clear name when a required entry file is missing,
+// instead of letting copyFileSync throw a bare ENOENT mid-run.
+for (const required of ['game.rbxl', 'PLAY.json']) {
+  if (!existsSync(join(here, required))) {
+    throw new Error(`Brainrot Night Market: missing required file ${required} next to main.ts`);
+  }
+}
 copyFileSync(join(here, 'game.rbxl'), join(out, 'game.rbxl'));
 copyFileSync(join(here, 'PLAY.json'), join(out, 'PLAY.json'));
 cpSync(join(here, 'src'), join(out, 'src'), { recursive: true, filter: notDotted });
