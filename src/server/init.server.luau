@@ -10,6 +10,7 @@ local BrainrotData = require(ReplicatedStorage.Shared.BrainrotData)
 local Config = require(ReplicatedStorage.Shared.Config)
 local Economy = require(ServerScriptService.Server.Economy)
 local Conveyor = require(ServerScriptService.Server.Conveyor)
+local ConveyorDisplay = require(ServerScriptService.Server.ConveyorDisplay)
 local Base = require(ServerScriptService.Server.Base)
 local Steal = require(ServerScriptService.Server.Steal)
 local Events = require(ServerScriptService.Server.Events)
@@ -43,6 +44,9 @@ local conveyorSync = makeRemote("ConveyorSync")
 local eventPing = makeRemote("EventPing")
 
 local conveyor = Conveyor.New()
+-- The market must look full from the first second: build the 3D models
+-- for all five conveyor offers now, before the first player joins.
+ConveyorDisplay.Update(conveyor)
 
 -- Broadcast helpers: one player's state to them, the conveyor to everyone,
 -- an event start/stop to everyone.
@@ -67,7 +71,10 @@ Economy.Init({
 		Steal.AttachDetector(model, owner, slotIndex)
 	end,
 	OnStateChanged = sendState,
-	OnConveyorChanged = sendConveyor,
+	OnConveyorChanged = function()
+		sendConveyor()
+		ConveyorDisplay.Update(conveyor)
+	end,
 })
 Steal.Init(Economy)
 Events.OnEventChanged = sendEvent
@@ -183,6 +190,7 @@ task.spawn(function()
 		end
 		if Conveyor.SpawnNext(conveyor) then
 			sendConveyor()
+			ConveyorDisplay.Update(conveyor)
 		end
 	end
 end)
